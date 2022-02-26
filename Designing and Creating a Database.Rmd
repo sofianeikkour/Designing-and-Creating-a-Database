@@ -1,0 +1,737 @@
+---
+title: "Designing and Creating a Database"
+author: "Sofiane Ikkour"
+output: html_document
+---
+
+**Context and objective:**  
+In this project, we will work with data related to [Major League Baseball](https://en.wikipedia.org/wiki/Major_League_Baseball) compiled by [Retrosheet](https://www.retrosheet.org/). Retrosheet is non-profit organization that's gathered game statistics from the 1800s to today. The goal is to convert and normalize this data into several separate tables using SQL and create a robust database of the game statistics.
+
+**Dataset:**  
+The main file we will work with is game_log.csv, which has been compiled and pre-cleaned from 127 separate CSV files from Retrosheet. In addition to the main file, we will work with three helper files also provided by Retrosheet. Those files are:
+- park_codes.csv.  
+- person_codes.csv.  
+- team_codes.csv.  
+- appearance_type.csv.  
+
+**Note:** This code was written on RStudio.  
+**Programming language:** SQL & R.  
+**Packages:** readr, RSQLite, DBI, do.
+
+**Load the datasets into R**
+```{r}
+# load the relevant libraries
+library(readr)
+library(do)
+library(RSQLite)
+library(DBI)
+
+# set working directory
+setwd("C:/Users/Aylan/Documents/IT/DataQuest/R/Designing and Creating a Database")
+
+# load and read the main dataset (game_log.csv)
+game_log <- read_csv("game_log.csv", col_types = cols(.default = "c"))
+
+# display the first few rows
+print(head(game_log, 10))
+
+# print the number of rows and columns the game_log.csv dataset
+print(paste("The number of rows of the game_log.csv dataset is:", nrow(game_log)))
+print(paste("The number of columns of the game_log.csv dataset is:", ncol(game_log)))
+
+# load and read the helper file park_codes.csv
+park_codes <- read_csv("park_codes.csv", col_types = cols())
+
+# display the first few rows
+print(head(park_codes, 10))
+
+# print the number of rows and columns the park_codes.csv dataset
+print(paste("The number of rows of the park_codes.csv dataset is:", nrow(park_codes)))
+print(paste("The number of columns of the park_codes.csv dataset is:", ncol(park_codes)))
+
+# load and read the helper file person_codes.csv
+person_codes <- read_csv("person_codes.csv", col_types = cols())
+
+# display the first few rows
+print(head(person_codes, 10))
+
+# print the number of rows and columns the person_codes.csv dataset
+print(paste("The number of rows of the person_codes.csv dataset is:", nrow(person_codes)))
+print(paste("The number of columns of the person_codes.csv dataset is:", ncol(person_codes)))
+
+# load and read the helper file team_codes.csv
+team_codes <- read_csv("team_codes.csv", col_types = cols())
+
+# display the first few rows
+print(head(team_codes, 10))
+
+# print the number of rows and columns the team_codes.csv dataset
+print(paste("The number of rows of the team_codes.csv dataset is:", nrow(team_codes)))
+print(paste("The number of columns of the team_codes.csv dataset is:", ncol(team_codes)))
+
+# load and read the helper file appearance_type.csv
+appearance_type <- read_csv("appearance_type.csv", col_types = cols())
+
+# display the first few rows
+print(head(appearance_type, 10))
+
+# print the number of rows and columns the appearance_type.csv dataset
+print(paste("The number of rows of the appearance_type.csv dataset is:", nrow(appearance_type)))
+print(paste("The number of columns of the appearance_type.csv dataset is:", ncol(appearance_type)))
+```
+
+**Observations:**  
+
+- The main dataset is very large with 171907 rows and 161 columns. After carefully analyzing the column names, my attention is focused on on the first few columns like v_name, h_name and v_game_number whose contents seem to be used as IDs of some kind. The date column can also be useful for manipulating the data.
+- The first helper file, park_codes.csv, has 252 rows and 9 columns. The first column is named parked_id, a column we can find in the main file. This column is useful in case we want to join the two datasets. 
+- The second helper file, person_codes, has 20494 rows and 7 columns and it seems to contain information about players like player names, player career debuts and coach career debuts.
+- The third helper file, team_codes, as the name suggests contains information about different teams of the game like team_id, nicknames and the city from which the team originated.
+- The fourth helper file, appearance_type, has 31 rows and 3 columns and include data on players with positions, umpires, managers and awards.
+
+You can refer to the additional game_log_fields.txt file provided for more detailed descriptions about the main dataset. It can help understand the data better.
+
+**First step - data normalization**  
+
+The first step is to designate a primary key. The main file game_log.csv doesn't have a column that we can be used as a primary key. One way we can handle this is by using a system provided by Retrosheet for uniquely identifying each game. 
+We can find this [data dictionary](https://www.retrosheet.org/eventfile.htm) on the Restrosheet website for their event files, which list every event for each game. This dictionary includes the following description:  
+
+*__id:__ Each game begins with a twelve character ID record which identifies the date, home team, and number of the game. For example, ATL198304080 should be read as follows. The first three characters identify the home team (the Braves). The next four are the year (1983). The next two are the month (April) using the standard numeric notation, 04, followed by the day (08). The last digit indicates if this is a single game (0), first game (1) or second game (2) if more than one game is played during a day, usually a double header The id record starts the description of a game thus ending the description of the preceding game in the file.*
+
+This is a custom key we will construct for the main dataset. But first, we need to import our csv files into SQLite.
+```{r}
+# create a new SQLite database named mlb.db
+mlb <- dbConnect(SQLite(), "mlb.db")
+
+# create a table for the game_log.csv file into the new SQLite database
+dbWriteTable(conn = mlb, name = "game_log", value = game_log, header = TRUE)
+
+# create a table for the park_codes.csv file into the new SQLite database
+dbWriteTable(conn = mlb, name = "park_codes", value = park_codes, header = TRUE)
+
+# create a table for the person_codes.csv file into the new SQLite database
+dbWriteTable(conn = mlb, name = "person_codes", value = person_codes, header = TRUE)
+
+# create a table for the team_codes.csv file into the new SQLite database
+dbWriteTable(conn = mlb, name = "team_codes", value = team_codes, header = TRUE)
+
+# write a query that creates a new column named game_id for the game_log table
+game_log_col <- 'ALTER TABLE game_log
+                 ADD COLUMN game_id TEXT;'
+
+# execute the query
+dbExecute(conn = mlb, game_log_col)
+
+# combine h_name, date and number of game and the result to the new column
+game_log_update <- 'UPDATE game_log
+                    SET game_id = h_name || date || number_of_game
+                    WHERE game_id IS NULL;'
+
+# execute the query
+dbExecute(conn = mlb, game_log_update)                    
+
+# display the new table
+q <- 'SELECT date, number_of_game, h_name, game_id FROM game_log;'
+head(dbGetQuery(conn = mlb, q), 10)
+```
+
+**Second step - data normalization:**  
+
+The second step in data normalization is to plan a schema by visually creating a diagram of the four existing tables and their columns.  
+I used the database design online tool DbDesigner.net which allows to create a schema and lines that show foreign key relations.  
+Below is the first suggested schema diagram:  
+
+![Schema diagram](/Users\Aylan\Documents\IT\DataQuest\R\Designing and Creating a Database/Schema diagram.JPG)
+
+Looking at the schema diagram, we obviously need to move the data into a more normalized state by creating new tables.
+
+**Discussion:**  
+ - If we take a close look at the game_log table, we can notice that some columns contain the same information as the next three columns. The subset of these columns start from the column v_player_1_id to v_player_9_def_pos. The same logic applies  from the column h_player_1_id to h_player_9_def_pos. These columns can be stacked on one another to remove this repetition.   
+- The start and end columns of the park_codes table indicate dates for the first and last games played at the park. These columns can be removed since the same information can be derived from the game_log table. The logic applies for the team_codes table where the start and end columns can be reproduced from the game_log table.  
+- The player_debut column can be reproduced using the game_log table.  
+- We have some columns in the game_log table where a player_id is followed by a player name. We can remove these columns and use the player names we can find in the person_codes table instead.  
+- In the game_log table, all defensive and offensive statistics are repeated for the visiting and home teams. We can remove this repetition by listing each game twice and associate each category of statistics for each game.  
+
+With all these observations made, we start by creating new tables without foreign relations since other tables will have relations to these tables.
+
+
+```{r}
+# create a table named person derived from the person_codes table
+create_person_table <- "CREATE TABLE IF NOT EXISTS person (
+                            person_id TEXT PRIMARY KEY,
+                            first_name TEXT,
+                            last_name TEXT
+                        );"
+
+# execute the query
+dbExecute(conn = mlb, create_person_table)
+
+# the debut columns are removed because the will be derived from other tables
+# the coach_debut column is removed definitely because it does not exist in the game_log table
+
+# insert the data from the person_codes table into the person table
+insert_person_table <-  "INSERT OR IGNORE INTO person
+                         SELECT
+                            id,
+                            first,
+                            last
+                         FROM person_codes;"
+
+# execute the query
+dbExecute(conn = mlb, insert_person_table)
+
+# display the first few rows of the person table
+q_person <- "SELECT * FROM person LIMIT 10;"
+dbGetQuery(conn = mlb, q_person) # get the query
+```
+```{r}
+# create a table named park derived from the park_codes table
+create_park_table <- "CREATE TABLE IF NOT EXISTS park (
+                            park_id TEXT PRIMARY KEY,
+                            name TEXT,
+                            aka_name TEXT,
+                            city,
+                            state,
+                            notes
+                          );"
+
+# the start, end and league columns are removed as they can be derived from the game_log table
+
+# execute the query
+dbExecute(conn = mlb, create_park_table)
+
+# insert data from the park_codes table into the new park table
+insert_park_table <- "INSERT OR IGNORE INTO park
+                      SELECT
+                         park_id,
+                         name,
+                         aka,
+                         city,
+                         state,
+                         notes
+                      FROM park_codes;"
+
+# execute the query
+dbExecute(conn = mlb, insert_park_table)
+
+# display the first few rows of the park table
+q_park <- "SELECT * FROM park LIMIT 10;"
+dbGetQuery(conn = mlb, q_park) # get the query
+```
+
+I wanted to create a table that contains a list of the different leagues. First of all, let's look at how many leagues are mentioned in the park_codes table. 
+```{r}
+# display unique values for the league column in the park_codes table
+unique_no.NA(park_codes$league)
+```
+There are six different leagues mentioned in the park_codes table. After researching these acronyms with the help of Google, I found the names associated for each league acronym:
+- NL: National League. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/National_League).  
+- UA: Union Association. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/Union_Association).  
+- AL: American League. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/Union_Association).  
+- AA: American Association. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/American_Association_of_Professional_Baseball).  
+- FL: Federal League. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/Federal_League).  
+- PL: Player's League. You can find more information on [this Wikipedia link](https://en.wikipedia.org/wiki/Players%27_League).  
+
+Let's create a table that contains two columns: the acronym and the name of each league.
+```{r}
+# create a table named league
+create_league_table <- "CREATE TABLE IF NOT EXISTS league (
+                           league_id TEXT PRIMARY KEY,
+                          league_name TEXT
+                        );"
+
+# execute the query
+dbExecute(conn = mlb, create_league_table)
+
+# insert data into the new league table
+insert_league_table <- "INSERT OR IGNORE INTO league
+                        VALUES 
+                             ('NL', 'National League'),
+                             ('UN', 'Union Association'),
+                             ('AL', 'American League'),
+                             ('AA', 'American Association'),
+                             ('FL', 'Federal League'),
+                             ('PL', 'Players League');"
+
+# execute the query
+dbExecute(conn = mlb, insert_league_table)
+
+# display the rows
+q_league <- "SELECT * FROM league;"
+dbGetQuery(conn = mlb, q_league) # get the query
+```
+
+Next, we need to create an appearance_type table using the data from appearance_type.csv file.
+```{r}
+# create a table for the appearance_type.csv file into the new SQLite database
+dbWriteTable(conn = mlb, name = "appearance_type", value = appearance_type, header = TRUE)
+
+# display the first few rows
+q_appearance_type <- "SELECT * FROM appearance_type LIMIT 10;"
+dbGetQuery(conn = mlb, q_appearance_type)
+```
+Two tables named game and team are added. Below is a reduced schema diagram that shows the two tables with the already created tables park and league and the foreign relations between them:
+
+![game_team schema](/Users\Aylan\Documents\IT\DataQuest\R\Designing and Creating a Database/game_team_schema.JPG)
+
+```{r}
+# create the team table
+create_team_table <- "CREATE TABLE team (
+                          team_id TEXT PRIMARY KEY,
+                          league_id TEXT,
+                          city TEXT,
+                          nickname TEXT,
+                          franch_id,
+                          FOREIGN KEY(league_id) REFERENCES league(league_id)
+                         );"
+
+# the start, end and seq columns can be derived from the game_log table
+
+# execute the query
+dbExecute(conn = mlb, create_team_table)
+
+# insert data from the team_codes table into the team table
+insert_team_table <- "INSERT OR IGNORE INTO team
+                      SELECT
+                         team_id,
+                         league,
+                         city,
+                         nickname,
+                         franch_id
+                       FROM team_codes;"
+
+# execute the query
+dbExecute(conn = mlb, insert_team_table)
+
+# display the first few rows
+q_team <- "SELECT * FROM team LIMIT 10;"
+dbGetQuery(conn = mlb, q_team) # get the query
+```
+```{r}
+# create the game table
+create_game_table <- "CREATE TABLE game (
+                           game_id TEXT PRIMARY KEY,
+                           date DATE,
+                           number_of_game INT,
+                           park_id TEXT,
+                           length_outs INT,
+                           day TEXT,
+                           completion TEXT,
+                           forfeit TEXT,
+                           protest TEXT,
+                           attendance INT,
+                           length_minutes INT,
+                           additional_info TEXT,
+                           acquisition_info TEXT,
+                           FOREIGN KEY(park_id) REFERENCES park(park_id)
+                        );"
+
+# execute the query
+dbExecute(conn = mlb, create_game_table)
+
+# insert data into the game table 
+insert_game_table <- "INSERT OR IGNORE INTO game
+                      SELECT 
+                         game_id,
+                         date,
+                         number_of_game,
+                         park_id,
+                         length_outs,
+                         day_night,
+                         completion,
+                         forfeit,
+                         protest,
+                         attendance,
+                         length_minutes,
+                         additional_info,
+                         acquisition_info
+                      FROM game_log;"
+
+# execute the query
+dbExecute(conn = mlb, insert_game_table)
+
+# display the first few rows
+q_game <- "SELECT * FROM game LIMIT 10;"
+dbGetQuery(conn = mlb, q_game) # get the query
+```
+The next table that will be created is named team_appearance. This table will have a compound primary key composed of team_id and game_id. It will also have a boolean column which differentiates the home and visitor teams. The rest of the columns will be scores and statistics derived from the game_log table. Below is a schema showing the new table with its relations with other tables:
+
+![team_appearance schema](/Users\Aylan\Documents\IT\DataQuest\R\Designing and Creating a Database/team_appearance.JPG)
+
+```{r}
+# create a table named team_appearance
+create_team_appearance_table <- "CREATE TABLE IF NOT EXISTS team_appearance (
+                                        team_id TEXT,
+                                        game_id TEXT,
+                                        home BOOLEAN,
+                                        league_id TEXT,
+                                        score INTEGER,
+                                        line_score INTEGER,
+                                        at_bats iNTEGER,
+                                        hits INTEGER,
+                                        doubles INTEGER,
+                                        triples INTEGER, 
+                                        homeruns INTEGER,
+                                        rbi INTEGER,
+                                        sacrifice_hits,
+                                        sacrifies_flies INTEGER,
+                                        hit_by_pitch INTEGER,
+                                        walks INTEGER,
+                                        intentional_walks INTEGER,
+                                        strikeouts INTEGER,
+                                        stolen_bases INTEGER,
+                                        caught_stealing INTEGER,
+                                        grounded_into_double INTEGER,
+                                        first_catcher_interfrence INTEGER,
+                                        left_on_base INTEGER,
+                                        pitchers_used INTEGER,
+                                        individual_earned_runs INTEGER,
+                                        team_earned_runs INTEGER,
+                                        wild_pitches INTEGER,
+                                        balks INTEGER,
+                                        putouts INTEGER,
+                                        assists INTEGER,
+                                        errors INTEGER,
+                                        passed_balls INTEGER,
+                                        double_plays INTEGER,
+                                        triple_plays INTEGER,
+                                        PRIMARY KEY(team_id, game_id),
+                                        FOREIGN KEY(league_id) REFERENCES league(league_id),
+                                        FOREIGN KEY(team_id) REFERENCES team(team_id),
+                                        FOREIGN KEY(game_id) REFERENCES game(game_id)
+                                 );"
+
+# execute the query
+dbExecute(conn = mlb, create_team_appearance_table)
+
+# insert data into the new created table derived from the game_log table
+insert_team_appearance_table <- "INSERT OR IGNORE INTO team_appearance
+                                 SELECT
+                                    h_name,
+                                    game_id,
+                                    1 AS Home,
+                                    h_league,
+                                    h_score,
+                                    h_line_score,
+                                    h_at_bats,
+                                    h_hits,
+                                    h_doubles,
+                                    h_triples,
+                                    h_homeruns,
+                                    h_rbi,
+                                    h_sacrifice_hits,
+                                    h_sacrifice_flies,
+                                    h_hit_by_pitch,
+                                    h_walks,
+                                    h_intentional_walks,
+                                    h_strikeouts,
+                                    h_stolen_bases,
+                                    h_caught_stealing,
+                                    h_grounded_into_double,
+                                    h_first_catcher_interference,
+                                    h_left_on_base,
+                                    h_pitchers_used,
+                                    h_individual_earned_runs,
+                                    h_team_earned_runs,
+                                    h_wild_pitches,
+                                    h_balks,
+                                    h_putouts,
+                                    h_assists,
+                                    h_errors,
+                                    h_passed_balls,
+                                    h_double_plays,
+                                    h_triple_plays 
+                                 FROM game_log
+                             UNION
+                                 SELECT
+                                    v_name,
+                                    game_id,
+                                    0 AS Home,
+                                    v_league,
+                                    v_score,
+                                    v_line_score,
+                                    v_at_bats,
+                                    v_hits,
+                                    v_doubles,
+                                    v_triples,
+                                    v_homeruns,
+                                    v_rbi,
+                                    v_sacrifice_hits,
+                                    v_sacrifice_flies,
+                                    v_hit_by_pitch,
+                                    v_walks,
+                                    v_intentional_walks,
+                                    v_strikeouts,
+                                    v_stolen_bases,
+                                    v_caught_stealing,
+                                    v_grounded_into_double,
+                                    v_first_catcher_interference,
+                                    v_left_on_base,
+                                    v_pitchers_used,
+                                    v_individual_earned_runs,
+                                    v_team_earned_runs,
+                                    v_wild_pitches,
+                                    v_balks,
+                                    v_putouts,
+                                    v_assists,
+                                    v_errors,
+                                    v_passed_balls,
+                                    v_double_plays,
+                                    v_triple_plays 
+                                 FROM game_log;"
+
+# execute the query
+dbExecute(conn = mlb, insert_team_appearance_table)
+
+# display the first fex row
+q_team_appearance <- "SELECT * FROM team_appearance LIMIT 10;"
+dbGetQuery(conn = mlb, q_team_appearance) # get the query
+```
+
+The last table to be created will be named person_appearance. This table will store information on appearances on games by managers, players, and umpires as it is detailed in the appearance_type table.  
+The diagram below shows the table and the different relations with other tables:
+
+![person_appearance schema](/Users\Aylan\Documents\IT\DataQuest\R\Designing and Creating a Database/person_appearance.JPG)
+
+```{r}
+# create a table named person_appearance
+create_person_appearance_table <- 
+                  "CREATE TABLE IF NOT EXISTS person_appearance (
+                     appearance_id TEXT PRIMARY KEY,
+                     person_id TEXT,
+                     team_id TEXT,
+                     game_id TEXT,
+                     appearance_type_id TEXT,
+                     FOREIGN KEY(person_id) REFERENCES person(person_id),
+                     FOREIGN KEY(team_id) REFERENCES team(team_id),
+                     FOREIGN KEY(game_id) REFERENCES game(game_id),
+                     FOREIGN KEY(appearance_type_id) REFERENCES appearance_type(appearance_type_id)
+                  );"
+
+# execute the query
+dbExecute(conn = mlb, create_person_appearance_table)
+
+# insert data into the table
+insert_person_appearance_table <- '
+  INSERT OR IGNORE INTO person_appearance (
+      game_id,
+      team_id,
+      person_id,
+      appearance_type_id
+  ) 
+      SELECT
+          game_id,
+          NULL,
+          hp_umpire_id,
+          "UHP"
+      FROM game_log
+      WHERE hp_umpire_id IS NOT NULL    
+  
+  UNION
+  
+      SELECT
+          game_id,
+          NULL,
+          [1b_umpire_id],
+          "U1B"
+      FROM game_log
+      WHERE "1b_umpire_id" IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          NULL,
+          [2b_umpire_id],
+          "U2B"
+      FROM game_log
+      WHERE [2b_umpire_id] IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          NULL,
+          [3b_umpire_id],
+          "U3B"
+      FROM game_log
+      WHERE [3b_umpire_id] IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          NULL,
+          lf_umpire_id,
+          "ULF"
+      FROM game_log
+      WHERE lf_umpire_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          NULL,
+          rf_umpire_id,
+          "URF"
+      FROM game_log
+      WHERE rf_umpire_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          v_name,
+          v_manager_id,
+          "MM"
+      FROM game_log
+      WHERE v_manager_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          h_name,
+          h_manager_id,
+          "MM"
+      FROM game_log
+      WHERE h_manager_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          CASE
+              WHEN h_score > v_score THEN h_name
+              ELSE v_name
+              END,
+          winning_pitcher_id,
+          "AWP"
+      FROM game_log
+      WHERE winning_pitcher_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          CASE
+              WHEN h_score < v_score THEN h_name
+              ELSE v_name
+              END,
+          losing_pitcher_id,
+          "ALP"
+      FROM game_log
+      WHERE losing_pitcher_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          CASE
+              WHEN h_score > v_score THEN h_name
+              ELSE v_name
+              END,
+          saving_pitcher_id,
+          "ASP"
+      FROM game_log
+      WHERE saving_pitcher_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          CASE
+              WHEN h_score > v_score THEN h_name
+              ELSE v_name
+              END,
+          winning_rbi_batter_id,
+          "AWB"
+      FROM game_log
+      WHERE winning_rbi_batter_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          v_name,
+          v_starting_pitcher_id,
+          "PSP"
+      FROM game_log
+      WHERE v_starting_pitcher_id IS NOT NULL
+  
+  UNION
+  
+      SELECT
+          game_id,
+          h_name,
+          h_starting_pitcher_id,
+          "PSP"
+      FROM game_log
+      WHERE h_starting_pitcher_id IS NOT NULL;
+'
+
+# execute the query
+dbExecute(conn = mlb, insert_person_appearance_table)
+
+# use a for loop with string formatting to insert the data for offensive and defensive positions from the game_log
+for (letter in c("h", "v")) {
+  for (num in 1:9) {
+    template <- '
+      INSERT INTO person_appearance (
+          game_id,
+          team_id,
+          person_id,
+          appearance_type_id
+      ) 
+          SELECT
+              game_id,
+              %s_name,
+              %s_player_%f_id,
+              "O%f"
+          FROM game_log
+          WHERE %s_player_%f_id IS NOT NULL
+      
+      UNION
+      
+          SELECT
+              game_id,
+              %s_name,
+              %s_player_%f_id,
+              "D" || CAST(%s_player_%f_def_pos AS INT)
+          FROM game_log
+          WHERE %s_player_%f_id IS NOT NULL;
+    '
+    # replace all of the %s and %f with the correct letter number
+    template <- gsub("%s", letter, template, fixed = TRUE)
+    template <- gsub("%f", num, template, fixed = TRUE)
+    # execute the query
+    dbExecute(conn = mlb, template)
+  }
+}
+
+# display the first few rows of the person_appearance table
+q_person_table <- "SELECT * FROM person_appearance LIMIT 10;"
+dbGetQuery(conn = mlb, q_person_table) # get the query
+```
+We've now created all normalized tables and inserted all our data.  
+The last task now is to remove all the tables we created to import the CSV files.
+```{r}
+# drop the game_log table
+drop_game_log <- "DROP TABLE game_log;"
+dbExecute(conn = mlb, drop_game_log) # execute the query
+
+# drop the park_codes table
+drop_park_codes <- "DROP TABLE park_codes;"
+dbExecute(conn = mlb, drop_park_codes) # execute the query
+
+# drop the person_codes table
+drop_person_codes <- "DROP TABLE person_codes;"
+dbExecute(conn = mlb, drop_person_codes) # execute the query
+
+# drop the team_codes table
+drop_team_codes <- "DROP TABLE team_codes;"
+dbExecute(conn = mlb, drop_team_codes) # execute the query
+``` 
+
+The final database schema diagram is illustrated below:  
+
+![Final database schema](/Users\Aylan\Documents\IT\DataQuest\R\Designing and Creating a Database/Final_database_schema.JPG)
